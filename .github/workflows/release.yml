@@ -4,10 +4,6 @@ on:
     tags: [ v* ]
 
 env:
-  # the repository to which to push the release version
-  # usually a fork of typst/packages (https://github.com/typst/packages/)
-  # that you have push privileges to
-  REGISTRY_REPO: author/typst-packages
   # the path within that repo where the "<name>/<version>" directory should be put
   # for the Typst package registry, keep this as is
   PATH_PREFIX: packages/preview
@@ -45,27 +41,9 @@ jobs:
           just doc
           just package out
 
-      - name: Checkout package registry
-        uses: actions/checkout@v4
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
         with:
-          repository: ${{ env.REGISTRY_REPO }}
-          token: ${{ secrets.REGISTRY_TOKEN }}
-          path: typst-packages
-
-      - name: Release package
-        run: |
-          mkdir -p "typst-packages/${{ env.PATH_PREFIX }}/$PKG_NAME"
-          mv "out/${PKG_NAME}/${PKG_VERSION}" "typst-packages/${{ env.PATH_PREFIX }}/${PKG_NAME}"
-          rmdir "out/${PKG_NAME}"
-          rmdir out
-
-          GIT_USER_NAME="$(git log -1 --pretty=format:'%an')"
-          GIT_USER_EMAIL="$(git log -1 --pretty=format:'%ae')"
-
-          cd typst-packages
-          git config user.name "${GIT_USER_NAME}"
-          git config user.email "${GIT_USER_EMAIL}"
-          git checkout -b "${PKG_NAME}-${PKG_VERSION}"
-          git add .
-          git commit -m "${PKG_NAME}:${PKG_VERSION}"
-          git push --set-upstream origin "${PKG_NAME}-${PKG_VERSION}"
+          name: ${{ env.PKG_NAME }}-${{ env.PKG_VERSION }}
+          path: out
+          retention-days: 3
