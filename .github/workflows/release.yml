@@ -8,9 +8,52 @@ env:
   # for the Typst package registry, keep this as is
   PATH_PREFIX: packages/preview
 
+# We need this to be able to create releases.
+permissions:
+  contents: write
+
 jobs:
-  release:
+  validate:
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine and check package metadata
+        run: |
+          . scripts/setup
+          echo "PKG_NAME=${PKG_PREFIX}" >> "${GITHUB_ENV}"
+          echo "PKG_VERSION=${VERSION}" >> "${GITHUB_ENV}"
+
+          if [[ "${GITHUB_REF_NAME}" != "v${VERSION}" ]]; then
+            echo "package version ${VERSION} does not match release tag ${GITHUB_REF_NAME}" >&2
+            exit 1
+          fi
+
+    outputs:
+      name: ${{ env.PKG_NAME }}
+      version: ${{ env.PKG_VERSION }}
+
+  create-release:
+    runs-on: ubuntu-latest
+    needs: [ validate ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine release name
+        run: |
+          echo "VERSION=${{ needs.validate.outputs.version }}" >> $GITHUB_ENV
+
+      - name: Create GitHub release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v$VERSION" --draft --verify-tag --title "$VERSION"
+
+  package:
+    runs-on: ubuntu-latest
+    needs: [ validate ]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -25,25 +68,45 @@ jobs:
         with:
           typst-version: latest
 
-      - name: Determine and check package metadata
+      - name: Determine package details
         run: |
-          . scripts/setup
-          echo "PKG_NAME=${PKG_PREFIX}" >> "${GITHUB_ENV}"
-          echo "PKG_VERSION=${VERSION}" >> "${GITHUB_ENV}"
-
-          if [[ "${GITHUB_REF_NAME}" != "v${VERSION}" ]]; then
-            echo "package version ${VERSION} does not match release tag ${GITHUB_REF_NAME}" >&2
-            exit 1
-          fi
+          echo "PKG_NAME=${{ needs.validate.outputs.name }}" >> $GITHUB_ENV
+          echo "VERSION=${{ needs.validate.outputs.version }}" >> $GITHUB_ENV
 
       - name: Build package
         run: |
           just doc
           just package out
+          cd "out/${PKG_NAME}/${VERSION}"
+          zip -r "../../../${PKG_NAME}-${VERSION}.zip" .
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PKG_NAME }}-${{ env.PKG_VERSION }}
-          path: out
+          name: ${{ env.PKG_NAME }}-${{ env.VERSION }}
+          path: ${{ env.PKG_NAME }}-${{ env.VERSION }}.zip
           retention-days: 3
+
+  add-to-release:
+    runs-on: ubuntu-latest
+    needs: [ validate, create-release, package ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine package details
+        run: |
+          echo "PKG_NAME=${{ needs.validate.outputs.name }}" >> $GITHUB_ENV
+          echo "VERSION=${{ needs.validate.outputs.version }}" >> $GITHUB_ENV
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.PKG_NAME }}-${{ env.VERSION }}
+
+      - name: Upload release archive
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -l
+          gh release upload "v$VERSION" "${PKG_NAME}-${VERSION}.zip"
